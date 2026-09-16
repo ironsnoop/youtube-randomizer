@@ -67,8 +67,17 @@
   .cols{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:20px;align-items:start}
   @media (max-width:880px){.cols{grid-template-columns:1fr}}
 
-  .stage{background:#000;border:1px solid var(--line);border-radius:10px;overflow:hidden;aspect-ratio:16/9}
+  .stage{position:relative;background:#000;border:1px solid var(--line);border-radius:10px;overflow:hidden;aspect-ratio:16/9}
   .stage iframe,.stage #player{width:100%;height:100%;border:0;display:block}
+  .veil{
+    position:absolute;inset:0;width:100%;height:100%;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+    background:rgba(26,22,38,.82);border:0;border-radius:0;
+    color:var(--accent);font-size:19px;font-weight:600;cursor:pointer;
+  }
+  .veil span{color:var(--muted);font-size:13px;font-weight:400}
+  .veil:hover{background:rgba(26,22,38,.72)}
+  .veil[hidden]{display:none}
 
   .now{margin:12px 2px 0}
   .now .t{font-weight:600;font-size:16px;line-height:1.35;overflow-wrap:anywhere}
@@ -111,7 +120,7 @@
 
   <div class="cols">
     <section>
-      <div class="stage"><div id="player"></div></div>
+      <div class="stage"><div id="player"></div><button class="veil" id="veil" hidden>Press play<span>Your browser blocked autoplay on the first video</span></button></div>
       <div class="now">
         <div class="t" id="nowTitle">Nothing playing yet</div>
         <div class="pos" id="nowPos"></div>
@@ -141,6 +150,10 @@
 </div>
 
 <script>
+/* ------------------------------------------------------------------
+   Put your Google API key here. It needs the YouTube Data API v3
+   enabled, and should be restricted to your Pages domain.
+------------------------------------------------------------------ */
 const API_KEY = "AIzaSyACs24zd44JwScIQiNHypcAQrB9ceCAp5g";
 
 const PAGE_SIZE   = 50;          // hard API maximum, do not raise
@@ -153,7 +166,7 @@ const el = {
   pid: $("#pid"), load: $("#load"), refetch: $("#refetch"), status: $("#status"),
   nowTitle: $("#nowTitle"), nowPos: $("#nowPos"),
   prev: $("#prev"), next: $("#next"), reshuffle: $("#reshuffle"), autoplay: $("#autoplay"),
-  filter: $("#filter"), qcount: $("#qcount"), list: $("#list")
+  filter: $("#filter"), qcount: $("#qcount"), list: $("#list"), veil: $("#veil")
 };
 
 let tracks = [];      // [{id, title}] in shuffled order
@@ -163,6 +176,7 @@ let playerReady = false;
 let pendingVideo = null;
 let currentPid = null;
 let loading = false;
+let blockTimer = null;
 
 /* ---------- status line ---------- */
 function say(msg, kind){
@@ -337,27 +351,86 @@ let apiReady = false;
 
 window.onYouTubeIframeAPIReady = function(){
   apiReady = true;
-  if (pendingVideo){ const v = pendingVideo; pendingVideo = null; startVideo(v); }
+  if (pendingVideo !== null){ const i = pendingVideo; pendingVideo = null; play(i); }
 };
 
-// Built with the first video already set, so YouTube loads the player and the
-// video in one pass instead of building an empty player and replacing it.
-function createPlayer(videoId){
+function hideVeil(){ el.veil.hidden = true; clearTimeout(blockTimer); }
+
+// If playback hasn't actually begun shortly after we asked for it, the browser
+// refused. A blocked embed reports BUFFERING and spins at 0:00 rather than
+// erroring, so trust the playhead rather than the reported state.
+function armAutoplayCheck(){
+  clearTimeout(blockTimer);
+  if (!el.autoplay.checked) return;
+  blockTimer = setTimeout(() => {
+    if (!player || !player.getPlayerState) return;
+    const st = player.getPlayerState();
+    const at = player.getCurrentTime ? player.getCurrentTime() : 0;
+    if (st === YT.PlayerState.PLAYING && at > 0) return;
+    // Nudge it once; if the browser allows playback this succeeds silently.
+    try { player.playVideo(); } catch(e){}
+    setTimeout(() => {
+      const t = player.getCurrentTime ? player.getCurrentTime() : 0;
+      if (t === 0) el.veil.hidden = false;
+    }, 1200);
+  }, 2000);
+}
+
+const WINDOW = 200;   // loadPlaylist accepts at most 200 ids
+let windowStart = 0;
+
+// Hands a block of ids to the player so YouTube owns the queue and stages the
+// next track, instead of cold-starting every video through loadVideoById.
+function loadWindow(at, autoplayNow){
+  windowStart = Math.max(0, Math.min(at, Math.max(0, tracks.length - 1)));
+  const ids = tracks.slice(windowStart, windowStart + WINDOW).map(t => t.id);
+  if (!ids.length) return;
+
+  const opts = { playlist: ids, index: 0, suggestedQuality: "default" };
+  if (autoplayNow && el.autoplay.checked) player.loadPlaylist(opts);
+  else player.cuePlaylist(opts);
+}
+
+function syncFromPlayer(){
+  if (!player || !player.getPlaylistIndex) return;
+  const rel = player.getPlaylistIndex();
+  if (rel < 0) return;
+  const abs = windowStart + rel;
+  if (abs !== index && tracks[abs]){
+    index = abs;
+    renderNow(); renderList(); saveSession();
+  }
+}
+
+function createPlayer(firstIds, startIndex){
+  windowStart = startIndex;
   player = new YT.Player("player", {
     height: "100%", width: "100%",
-    videoId: videoId,
-    playerVars: { rel: 0, playsinline: 1, autoplay: el.autoplay.checked ? 1 : 0 },
+    playerVars: {
+      rel: 0, playsinline: 1,
+      autoplay: el.autoplay.checked ? 1 : 0,
+      origin: location.origin,
+      playlist: firstIds.join(",")
+    },
     events: {
       onReady: () => {
         playerReady = true;
-        if (pendingVideo){ const v = pendingVideo; pendingVideo = null; startVideo(v); }
+        loadWindow(windowStart, true);
       },
       onStateChange: e => {
-        if (e.data === YT.PlayerState.ENDED) step(1);
-        if (e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.CUED) renderNow();
+        if (e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.BUFFERING) hideVeil();
+        if (e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.CUED) syncFromPlayer();
+        if (e.data === YT.PlayerState.ENDED){
+          // End of the window, not the playlist: stage the next block.
+          const rel = player.getPlaylistIndex();
+          if (rel >= Math.min(WINDOW, tracks.length - windowStart) - 1){
+            const nextAt = windowStart + WINDOW;
+            if (nextAt < tracks.length) loadWindow(nextAt, true);
+            else loadWindow(0, true);
+          }
+        }
       },
       onError: e => {
-        // 100 / 101 / 150: removed, private, or embedding disabled.
         el.nowPos.textContent = "Unavailable \u2014 skipping\u2026 (code " + e.data + ")";
         if (tracks.length > 1) setTimeout(() => step(1), 250);
       }
@@ -365,26 +438,33 @@ function createPlayer(videoId){
   });
 }
 
-function startVideo(videoId){
-  if (!apiReady){
-    pendingVideo = videoId;
-    el.nowPos.textContent = "Starting player\u2026";
-    return;
-  }
-  if (!player){ createPlayer(videoId); return; }
-  if (!playerReady){ pendingVideo = videoId; return; }
-  if (el.autoplay.checked) player.loadVideoById(videoId);
-  else player.cueVideoById(videoId);
-}
-
 function play(i){
   if (!tracks.length) return;
   index = ((i % tracks.length) + tracks.length) % tracks.length;
-  startVideo(tracks[index].id);
+
+  if (!apiReady){ pendingVideo = index; el.nowPos.textContent = "Starting player\u2026"; return; }
+  if (!player){
+    createPlayer(tracks.slice(index, index + WINDOW).map(t => t.id), index);
+    armAutoplayCheck();
+  } else if (playerReady){
+    const rel = index - windowStart;
+    if (rel >= 0 && rel < WINDOW && rel < tracks.length - windowStart){
+      // Already staged in the current window: a jump, not a reload.
+      if (el.autoplay.checked) player.playVideoAt(rel);
+      else { player.cuePlaylist({ playlist: tracks.slice(windowStart, windowStart + WINDOW).map(t => t.id), index: rel }); }
+    } else {
+      loadWindow(index, true);
+    }
+    armAutoplayCheck();
+  } else {
+    pendingVideo = index;
+  }
+
   renderNow();
   renderList();
   saveSession();
 }
+
 function step(d){ play(index + d); }
 
 /* ---------- session ---------- */
@@ -482,6 +562,10 @@ el.reshuffle.addEventListener("click", () => {
   if (!tracks.length) return;
   tracks = shuffle(tracks);
   play(0);
+});
+el.veil.addEventListener("click", () => {
+  hideVeil();
+  if (player && player.playVideo) player.playVideo();
 });
 el.filter.addEventListener("input", renderList);
 el.list.addEventListener("click", e => {
