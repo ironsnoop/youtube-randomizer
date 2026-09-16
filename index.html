@@ -141,7 +141,6 @@
 </div>
 
 <script>
-
 const API_KEY = "AIzaSyACs24zd44JwScIQiNHypcAQrB9ceCAp5g";
 
 const PAGE_SIZE   = 50;          // hard API maximum, do not raise
@@ -334,25 +333,45 @@ function syncButtons(){
 }
 
 /* ---------- player ---------- */
+let apiReady = false;
+
 window.onYouTubeIframeAPIReady = function(){
+  apiReady = true;
+  if (pendingVideo){ const v = pendingVideo; pendingVideo = null; startVideo(v); }
+};
+
+// Built with the first video already set, so YouTube loads the player and the
+// video in one pass instead of building an empty player and replacing it.
+function createPlayer(videoId){
   player = new YT.Player("player", {
     height: "100%", width: "100%",
-    playerVars: { rel: 0, playsinline: 1 },
+    videoId: videoId,
+    playerVars: { rel: 0, playsinline: 1, autoplay: el.autoplay.checked ? 1 : 0 },
     events: {
       onReady: () => {
         playerReady = true;
         if (pendingVideo){ const v = pendingVideo; pendingVideo = null; startVideo(v); }
       },
-      onStateChange: e => { if (e.data === YT.PlayerState.ENDED) step(1); },
-      onError: () => {
-        // 100 / 101 / 150: removed or embedding disabled. Move on.
-        if (tracks.length > 1) setTimeout(() => step(1), 700);
+      onStateChange: e => {
+        if (e.data === YT.PlayerState.ENDED) step(1);
+        if (e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.CUED) renderNow();
+      },
+      onError: e => {
+        // 100 / 101 / 150: removed, private, or embedding disabled.
+        el.nowPos.textContent = "Unavailable \u2014 skipping\u2026 (code " + e.data + ")";
+        if (tracks.length > 1) setTimeout(() => step(1), 250);
       }
     }
   });
-};
+}
 
 function startVideo(videoId){
+  if (!apiReady){
+    pendingVideo = videoId;
+    el.nowPos.textContent = "Starting player\u2026";
+    return;
+  }
+  if (!player){ createPlayer(videoId); return; }
   if (!playerReady){ pendingVideo = videoId; return; }
   if (el.autoplay.checked) player.loadVideoById(videoId);
   else player.cueVideoById(videoId);
