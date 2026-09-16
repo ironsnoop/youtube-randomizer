@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Playlist Shuffler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#1A1626;
+    --panel:#241E33;
+    --panel-2:#2C2540;
+    --line:#3A3150;
+    --text:#EDE8F5;
+    --muted:#A099B8;
+    --accent:#E8B84B;
+    --accent-ink:#2A2009;
+    --bad:#E2685C;
+    --ok:#7FC8A9;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:Archivo,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    font-size:15px;
+    line-height:1.5;
+  }
+  a{color:var(--accent)}
+
+  .wrap{max-width:1180px;margin:0 auto;padding:24px 20px 60px}
+
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+  h1{font-size:22px;font-weight:700;letter-spacing:-0.02em;margin:0}
+  .sub{color:var(--muted);font-size:13px}
+
+  .bar{
+    display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:12px;margin-bottom:8px;
+  }
+  input[type=text],input[type=search]{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:9px 11px;font:inherit;font-size:14px;min-width:0;
+  }
+  input[type=text]:focus,input[type=search]:focus{outline:2px solid var(--accent);outline-offset:1px}
+  #pid{flex:1 1 320px}
+
+  button{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:9px 14px;font:inherit;font-size:14px;font-weight:500;cursor:pointer;
+  }
+  button:hover:not(:disabled){background:var(--line)}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+  button.primary:hover:not(:disabled){filter:brightness(1.08)}
+
+  .status{min-height:22px;font-size:13px;color:var(--muted);margin:0 0 18px 2px}
+  .status.err{color:var(--bad)}
+  .status .tick{color:var(--ok)}
+
+  .cols{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:20px;align-items:start}
+  @media (max-width:880px){.cols{grid-template-columns:1fr}}
+
+  .stage{background:#000;border:1px solid var(--line);border-radius:10px;overflow:hidden;aspect-ratio:16/9}
+  .stage iframe,.stage #player{width:100%;height:100%;border:0;display:block}
+
+  .now{margin:12px 2px 0}
+  .now .t{font-weight:600;font-size:16px;line-height:1.35;overflow-wrap:anywhere}
+  .now .pos{color:var(--muted);font-size:13px;margin-top:3px}
+
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;align-items:center}
+  .controls label{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;cursor:pointer}
+
+  .queue{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .queue .qhead{display:flex;gap:8px;padding:12px;border-bottom:1px solid var(--line)}
+  .queue .qhead input{flex:1}
+  .qcount{padding:8px 14px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line)}
+  ol.list{list-style:none;margin:0;padding:0;max-height:560px;overflow-y:auto}
+  ol.list li{display:flex;gap:10px;padding:9px 14px;cursor:pointer;border-bottom:1px solid rgba(58,49,80,.5)}
+  ol.list li:hover{background:var(--panel-2)}
+  ol.list li.on{background:var(--panel-2);box-shadow:inset 3px 0 0 var(--accent)}
+  ol.list li.on .n,ol.list li.on .ttl{color:var(--accent)}
+  .n{color:var(--muted);font-variant-numeric:tabular-nums;font-size:13px;min-width:2.6em;text-align:right}
+  .ttl{font-size:13.5px;line-height:1.4;overflow-wrap:anywhere}
+
+  .empty{padding:26px 16px;color:var(--muted);font-size:13.5px;text-align:center}
+
+  .note{margin-top:22px;color:var(--muted);font-size:12.5px;max-width:64ch}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Playlist Shuffler</h1>
+    <span class="sub">Loads every video, not the first 50.</span>
+  </header>
+
+  <div class="bar">
+    <input type="text" id="pid" placeholder="Playlist ID or full YouTube playlist URL" spellcheck="false" autocomplete="off">
+    <button class="primary" id="load">Load and shuffle</button>
+    <button id="refetch" title="Ignore the saved copy and fetch from YouTube again">Refresh</button>
+  </div>
+  <p class="status" id="status"></p>
+
+  <div class="cols">
+    <section>
+      <div class="stage"><div id="player"></div></div>
+      <div class="now">
+        <div class="t" id="nowTitle">Nothing playing yet</div>
+        <div class="pos" id="nowPos"></div>
+      </div>
+      <div class="controls">
+        <button id="prev" disabled>Previous</button>
+        <button id="next" disabled>Next</button>
+        <button id="reshuffle" disabled>Shuffle again</button>
+        <label><input type="checkbox" id="autoplay" checked> Play automatically</label>
+      </div>
+    </section>
+
+    <section class="queue">
+      <div class="qhead">
+        <input type="search" id="filter" placeholder="Filter by title" spellcheck="false">
+      </div>
+      <div class="qcount" id="qcount">No playlist loaded</div>
+      <ol class="list" id="list"><li class="empty" style="display:block">Paste a playlist ID above to start.</li></ol>
+    </section>
+  </div>
+
+  <p class="note">
+    Videos that have been deleted or made private are skipped automatically. The track list is saved in
+    this browser so it loads instantly next time — use Refresh after you add songs to the playlist.
+  </p>
+
+</div>
+
+<script>
+
+const API_KEY = "AIzaSyACs24zd44JwScIQiNHypcAQrB9ceCAp5g";
+
+const PAGE_SIZE   = 50;          // hard API maximum, do not raise
+const MAX_ROWS    = 600;         // rows drawn at once; filter narrows past this
+const CACHE_KEY   = id => "ytr:v1:" + id;
+const SESSION_KEY = "ytr:session";
+
+const $ = s => document.querySelector(s);
+const el = {
+  pid: $("#pid"), load: $("#load"), refetch: $("#refetch"), status: $("#status"),
+  nowTitle: $("#nowTitle"), nowPos: $("#nowPos"),
+  prev: $("#prev"), next: $("#next"), reshuffle: $("#reshuffle"), autoplay: $("#autoplay"),
+  filter: $("#filter"), qcount: $("#qcount"), list: $("#list")
+};
+
+let tracks = [];      // [{id, title}] in shuffled order
+let index  = -1;      // position in tracks
+let player = null;
+let playerReady = false;
+let pendingVideo = null;
+let currentPid = null;
+let loading = false;
+
+/* ---------- status line ---------- */
+function say(msg, kind){
+  el.status.className = "status" + (kind === "err" ? " err" : "");
+  el.status.innerHTML = kind === "ok" ? '<span class="tick">\u2713</span> ' + esc(msg) : esc(msg);
+}
+function esc(s){ return String(s).replace(/[&<>"']/g, c => (
+  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+/* ---------- playlist id ---------- */
+function parsePid(raw){
+  const s = (raw || "").trim();
+  if (!s) return null;
+  const m = s.match(/[?&]list=([^&#]+)/);
+  if (m) return m[1];
+  if (/^https?:/i.test(s)) return null;
+  return s;
+}
+
+/* ---------- fetching ---------- */
+async function fetchPage(pid, pageToken){
+  const u = new URL("https://www.googleapis.com/youtube/v3/playlistItems");
+  u.searchParams.set("part", "snippet,status");
+  u.searchParams.set("maxResults", String(PAGE_SIZE));
+  u.searchParams.set("playlistId", pid);
+  u.searchParams.set("key", API_KEY);
+  if (pageToken) u.searchParams.set("pageToken", pageToken);
+
+  const res = await fetch(u.toString());
+  const body = await res.json().catch(() => null);
+  if (!res.ok){
+    const reason = body && body.error && body.error.message
+      ? body.error.message
+      : res.status + " " + res.statusText;
+    throw new Error(reason);
+  }
+  return body;
+}
+
+function usable(item){
+  const s = item && item.snippet;
+  if (!s || !s.resourceId || !s.resourceId.videoId) return false;
+  if (s.title === "Deleted video" || s.title === "Private video") return false;
+  if (item.status && item.status.privacyStatus === "private") return false;
+  return true;
+}
+
+// Walks every page. The loop ends only when YouTube stops sending a
+// nextPageToken — never on a count field, which is what truncates most
+// of these tools at exactly 50.
+async function fetchAll(pid, onProgress){
+  const out = [];
+  let token = undefined;
+  let pages = 0;
+
+  do {
+    const data = await fetchPage(pid, token);
+    for (const item of (data.items || [])){
+      if (usable(item)){
+        out.push({ id: item.snippet.resourceId.videoId, title: item.snippet.title });
+      }
+    }
+    pages++;
+    token = data.nextPageToken || null;
+    if (onProgress) onProgress(out, pages, Boolean(token));
+  } while (token);
+
+  return out;
+}
+
+/* ---------- cache (complete lists only) ---------- */
+function readCache(pid){
+  try{
+    const raw = localStorage.getItem(CACHE_KEY(pid));
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    // A partial fetch must never be mistaken for a finished one.
+    if (!obj || obj.complete !== true || !Array.isArray(obj.tracks)) return null;
+    if (obj.tracks.length !== obj.count) return null;
+    return obj;
+  } catch(e){ return null; }
+}
+function writeCache(pid, list){
+  try{
+    localStorage.setItem(CACHE_KEY(pid), JSON.stringify({
+      complete: true, count: list.length, tracks: list, fetchedAt: Date.now()
+    }));
+  } catch(e){ /* storage full or blocked; not fatal */ }
+}
+
+/* ---------- shuffle ---------- */
+function shuffle(arr){
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--){
+    const r = new Uint32Array(1);
+    crypto.getRandomValues(r);
+    const j = r[0] % (i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/* ---------- rendering ---------- */
+function renderList(){
+  const q = el.filter.value.trim().toLowerCase();
+  const matches = [];
+  for (let i = 0; i < tracks.length; i++){
+    if (!q || tracks[i].title.toLowerCase().includes(q)) matches.push(i);
+  }
+
+  el.qcount.textContent = tracks.length === 0
+    ? "No playlist loaded"
+    : q
+      ? matches.length + " of " + tracks.length + " match"
+      : tracks.length + " videos" + (loading ? " so far\u2026" : "");
+
+  const frag = document.createDocumentFragment();
+  const shown = matches.slice(0, MAX_ROWS);
+
+  if (shown.length === 0){
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = tracks.length ? "Nothing matches that." : "Paste a playlist ID above to start.";
+    frag.appendChild(li);
+  } else {
+    for (const i of shown){
+      const li = document.createElement("li");
+      if (i === index) li.className = "on";
+      li.dataset.i = String(i);
+
+      const n = document.createElement("span");
+      n.className = "n";
+      n.textContent = (i + 1) + ".";
+
+      const t = document.createElement("span");
+      t.className = "ttl";
+      t.textContent = tracks[i].title;
+
+      li.append(n, t);
+      frag.appendChild(li);
+    }
+    if (matches.length > shown.length){
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "+ " + (matches.length - shown.length) + " more \u2014 use the filter to narrow it down.";
+      frag.appendChild(li);
+    }
+  }
+
+  el.list.replaceChildren(frag);
+}
+
+function renderNow(){
+  if (index < 0 || !tracks[index]){
+    el.nowTitle.textContent = "Nothing playing yet";
+    el.nowPos.textContent = "";
+    return;
+  }
+  el.nowTitle.textContent = tracks[index].title;
+  el.nowPos.textContent = "Track " + (index + 1) + " of " + tracks.length;
+}
+
+function syncButtons(){
+  const has = tracks.length > 0;
+  el.prev.disabled = !has;
+  el.next.disabled = !has;
+  el.reshuffle.disabled = !has;
+}
+
+/* ---------- player ---------- */
+window.onYouTubeIframeAPIReady = function(){
+  player = new YT.Player("player", {
+    height: "100%", width: "100%",
+    playerVars: { rel: 0, playsinline: 1 },
+    events: {
+      onReady: () => {
+        playerReady = true;
+        if (pendingVideo){ const v = pendingVideo; pendingVideo = null; startVideo(v); }
+      },
+      onStateChange: e => { if (e.data === YT.PlayerState.ENDED) step(1); },
+      onError: () => {
+        // 100 / 101 / 150: removed or embedding disabled. Move on.
+        if (tracks.length > 1) setTimeout(() => step(1), 700);
+      }
+    }
+  });
+};
+
+function startVideo(videoId){
+  if (!playerReady){ pendingVideo = videoId; return; }
+  if (el.autoplay.checked) player.loadVideoById(videoId);
+  else player.cueVideoById(videoId);
+}
+
+function play(i){
+  if (!tracks.length) return;
+  index = ((i % tracks.length) + tracks.length) % tracks.length;
+  startVideo(tracks[index].id);
+  renderNow();
+  renderList();
+  saveSession();
+}
+function step(d){ play(index + d); }
+
+/* ---------- session ---------- */
+function saveSession(){
+  try{
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      pid: currentPid, order: tracks.map(t => t.id), index: index
+    }));
+  } catch(e){}
+}
+
+/* ---------- main load ---------- */
+async function load(pidRaw, { force = false } = {}){
+  if (API_KEY === "PASTE_KEY_HERE"){
+    say("No API key set. Open index.html and replace PASTE_KEY_HERE near the top of the script.", "err");
+    return;
+  }
+
+  const pid = parsePid(pidRaw);
+  if (!pid){
+    say("That doesn't look like a playlist ID. Use the part after list= in the YouTube URL.", "err");
+    return;
+  }
+
+  currentPid = pid;
+  el.pid.value = pid;
+  const url = new URL(location.href);
+  url.searchParams.set("pid", pid);
+  history.replaceState(null, "", url);
+
+  if (!force){
+    const cached = readCache(pid);
+    if (cached){
+      tracks = shuffle(cached.tracks);
+      loading = false;
+      say(cached.count + " videos loaded from this browser's saved copy.", "ok");
+      syncButtons(); renderList(); play(0);
+      return;
+    }
+  }
+
+  loading = true;
+  tracks = [];
+  index = -1;
+  syncButtons();
+  say("Fetching page 1\u2026");
+
+  try{
+    const all = await fetchAll(pid, (sofar, pages, more) => {
+      say("Fetched " + sofar.length + " videos across " + pages + " page" +
+          (pages === 1 ? "" : "s") + (more ? "\u2026" : "."));
+      // Start playing as soon as the first page is in; the rest keeps loading.
+      if (pages === 1 && sofar.length > 0){
+        tracks = shuffle(sofar.slice());
+        syncButtons(); renderList(); play(0);
+      }
+    });
+
+    loading = false;
+
+    if (all.length === 0){
+      say("That playlist came back empty. Check the ID, and that the playlist is public or unlisted.", "err");
+      return;
+    }
+
+    const keepId = index >= 0 && tracks[index] ? tracks[index].id : null;
+    tracks = shuffle(all);
+    writeCache(pid, all);
+
+    if (keepId){
+      const at = tracks.findIndex(t => t.id === keepId);
+      index = at >= 0 ? at : 0;
+    } else {
+      index = 0;
+    }
+
+    say(all.length + " videos loaded.", "ok");
+    syncButtons(); renderNow(); renderList();
+    if (index === 0 && !playerReady) play(0);
+
+  } catch(err){
+    loading = false;
+    say("YouTube refused the request: " + err.message, "err");
+    syncButtons(); renderList();
+  }
+}
+
+/* ---------- events ---------- */
+el.load.addEventListener("click", () => load(el.pid.value));
+el.refetch.addEventListener("click", () => load(el.pid.value, { force: true }));
+el.pid.addEventListener("keydown", e => { if (e.key === "Enter") load(el.pid.value); });
+el.prev.addEventListener("click", () => step(-1));
+el.next.addEventListener("click", () => step(1));
+el.reshuffle.addEventListener("click", () => {
+  if (!tracks.length) return;
+  tracks = shuffle(tracks);
+  play(0);
+});
+el.filter.addEventListener("input", renderList);
+el.list.addEventListener("click", e => {
+  const li = e.target.closest("li[data-i]");
+  if (li) play(Number(li.dataset.i));
+});
+
+/* ---------- boot ---------- */
+(function boot(){
+  const tag = document.createElement("script");
+  tag.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(tag);
+
+  const params = new URLSearchParams(location.search);
+  const fromUrl = params.get("pid");
+  if (fromUrl){
+    el.pid.value = fromUrl;
+    load(fromUrl);
+    return;
+  }
+  try{
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    if (s && s.pid){ el.pid.value = s.pid; }
+  } catch(e){}
+})();
+</script>
+</body>
+</html>
